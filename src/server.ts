@@ -1,4 +1,4 @@
-import { createServer } from "node:http";
+import { createServer, IncomingMessage, type ServerResponse, type RequestListener } from "node:http";
 import { createHash } from "node:crypto";
 import type { WechatBot } from "./index.js";
 import type Stream from "node:stream";
@@ -9,10 +9,22 @@ interface WebsocketConnection {
     isFragment: boolean;
 }
 
+type ServerHandleRequest = IncomingMessage & {
+    params: Record<string, string>;
+    query: URLSearchParams;
+};
+
+type ServerHandleResponse = ServerResponse<IncomingMessage> & {
+    req: IncomingMessage;
+    json: (data: any) => void;
+};
+
+type ServerHandle = (req: ServerHandleRequest, res: ServerHandleResponse) => Promise<void>;
+
 export class WechatBotAdapterServer {
     private server: ReturnType<typeof createServer> | null = null;
     private connections = new Map<Stream.Duplex, WebsocketConnection>();
-    private routes: Record<string, { route: string; handle: Function }[]> = {};
+    private routes: Record<string, { route: string; handle: ServerHandle; regExp?: RegExp }[]> = {};
 
     constructor(
         private port = 38219,
@@ -21,19 +33,25 @@ export class WechatBotAdapterServer {
         this.start();
     }
 
-    private registerRoute(method: string, route: string, handle: Function) {
-        if (!this.routes[method]) {
-            this.routes[method] = [];
-        }
-        this.routes[method].push({ route, handle });
-    }
-
-    private findRoute(url: string, method: string) {}
-
     private start() {
-        this.server = createServer(async (req, res) => {
-            console.log(req);
-        });
+        const handle: ServerHandle = async (req, res) => {
+            res.json = (data) => {
+                res.end(JSON.stringify(data));
+            };
+            const routeMatched = this.findRoute(req.url!, req.method!);
+            if (!routeMatched) {
+                res.statusCode = 404;
+                res.end("");
+            } else {
+                req.params = routeMatched.params;
+                routeMatched.handle(req, res);
+            }
+        };
+        this.server = createServer(handle as unknown as RequestListener);
+
+        // route config start
+        this.registerRoute("get", "/health", this.health);
+        // route config end
 
         this.server.on("upgrade", (req, socket, head) => {
             const key = req.headers["sec-websocket-key"];
@@ -179,4 +197,59 @@ export class WechatBotAdapterServer {
 
         socket.write(Buffer.concat([header, buffer]));
     }
+
+    private registerRoute(method: string, route: string, handle: ServerHandle) {
+        method = method.toLowerCase();
+        if (!this.routes[method]) {
+            this.routes[method] = [];
+        }
+        this.routes[method]!.push({ route, handle });
+    }
+
+    private getRouteRegExp(routePathConfig: string) {
+        return new RegExp(
+            `^${routePathConfig.replace(/\/|:[a-z]+/gi, (a) => {
+                if (a === "/") return "\\/";
+                return `(?<${a.substring(1)}>[a-z0-9A-Z\-_\.~!\$&'\(\)\*\+,;=@]+)`;
+            })}`,
+        );
+    }
+
+    private findRoute(url: string, method: string) {
+        method = method.toLowerCase();
+        const routes = this.routes[method] || [];
+        const route = routes.find((r) => {
+            if (!r.regExp) {
+                r.regExp = this.getRouteRegExp(r.route);
+            }
+            r.regExp.lastIndex = 0;
+            if (r.regExp.test(url)) return true;
+        });
+        if (route) {
+            route.regExp!.lastIndex = 0;
+            const reg = route.regExp!.exec(url);
+            return {
+                ...route,
+                params: reg?.groups || {},
+            };
+        }
+    }
+
+    private getRequestQuery(req: ServerHandleRequest) {
+        if (!req.query) {
+            req.query = new URLSearchParams(req.url!.substring(req.url!.indexOf("?") + 1));
+        }
+        return req.query;
+    }
+
+    private getRequestBodyAsJson(req: ServerHandleRequest) {}
+
+    // http config
+
+    private health: ServerHandle = async (req, res) => {
+        res.json({
+            status: "ok",
+            timestamp: new Date().toISOString(),
+        });
+    };
 }
