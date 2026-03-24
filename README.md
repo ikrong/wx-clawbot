@@ -12,9 +12,17 @@ npm install wx-clawbot
 
 ```javascript
 import { WechatBot } from "wx-clawbot";
+import qr from "qrcode-terminal"; // 安装一个终端二维码生成工具
 
-new WechatBot().ensureLogin().then((bot) => {
-    bot.on("message", (message) => {
+new WechatBot()
+    .ensureLogin()
+    .on("scan", ({ url }) => {
+        qr.generate(url, { small: true }, (qrcode) => {
+            console.log("请使用微信扫码登录");
+            console.log(qrcode);
+        });
+    })
+    .on("message", (message) => {
         // 处理消息
         message.text; // 文本消息
         message.downloadMedia(); // 下载媒体，返回的是buffer，需要自己处理文件
@@ -25,7 +33,6 @@ new WechatBot().ensureLogin().then((bot) => {
         message.sendFile("./file.pdf");
         message.sendVideo("./video.mp4");
     });
-});
 ```
 
 # 许可证

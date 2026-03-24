@@ -4,7 +4,7 @@ import { store } from "./store.js";
 import { sleep } from "./utils.js";
 import { Message } from "./message.js";
 
-export interface WechatBotMessage {
+interface WechatBotMessage {
     login: [
         | {
               status: "failed";
@@ -33,10 +33,21 @@ export class WechatBot extends EventEmitter<WechatBotMessage> {
     private client = new WechatBotApiClient();
     private abortController = new AbortController();
 
-    async ensureLogin() {
+    ensureLogin() {
+        this._ensureLogin();
+        return this;
+    }
+
+    private async _ensureLogin() {
         const token = store.get("botToken");
         let isLogin = false;
         if (token) {
+            this.client.setAuthorizations({
+                botToken: token,
+                accountId: store.get("accountId"),
+                userId: store.get("userId"),
+                baseUrl: store.get("baseUrl"),
+            });
             const p = new Promise((r) => {
                 this.once("logout", () => r(false));
                 this.once("connected", () => r(true));
@@ -52,8 +63,6 @@ export class WechatBot extends EventEmitter<WechatBotMessage> {
             }
             this.waitMessage();
         }
-
-        return this;
     }
 
     private async login() {
@@ -124,7 +133,9 @@ export class WechatBot extends EventEmitter<WechatBotMessage> {
                     timeoutMs = updates.longpolling_timeout_ms;
                 }
 
-                const isErr = updates.ret !== 0 || updates.errcode !== 0;
+                const isErr =
+                    (updates.ret !== undefined && updates.ret !== 0) ||
+                    (updates.errcode !== undefined && updates.errcode !== 0);
                 const isSessionExpired = isErr && (updates.errcode === -14 || updates.ret === -14);
 
                 if (isErr && isSessionExpired) {
