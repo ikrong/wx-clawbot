@@ -27,14 +27,21 @@ interface WechatBotMessage {
     logout: [];
     message: [Message];
     connected: [];
+    error: [Error];
 }
 
 export class WechatBot extends EventEmitter<WechatBotMessage> {
     private client = new WechatBotApiClient();
     private abortController = new AbortController();
+    private connected = false;
+
+    constructor() {
+        super();
+        this.on("error", () => void 0);
+    }
 
     ensureLogin() {
-        this._ensureLogin();
+        this._ensureLogin().catch((e) => this.emit("error", e));
         return this;
     }
 
@@ -48,12 +55,17 @@ export class WechatBot extends EventEmitter<WechatBotMessage> {
                 userId: store.get("userId"),
                 baseUrl: store.get("baseUrl"),
             });
-            const p = new Promise((r) => {
+            let abortListener: any;
+            const p = new Promise((r, j) => {
                 this.once("logout", () => r(false));
                 this.once("connected", () => r(true));
+                this.abortController.signal.addEventListener("abort", (abortListener = () => j(new Error("助手关闭"))));
             });
             this.waitMessage();
             await p;
+            if (abortListener) {
+                this.abortController.signal.removeEventListener("abort", abortListener);
+            }
         }
         if (!isLogin) {
             this.once("login", ({ status }) => (isLogin = status === "success"));
@@ -101,6 +113,7 @@ export class WechatBot extends EventEmitter<WechatBotMessage> {
                     store.set("accountId", ilink_bot_id);
                     store.set("userId", ilink_user_id);
                     store.set("baseUrl", baseurl);
+                    this.abortController = new AbortController();
                     return this.emit("login", {
                         status: "success",
                         botToken: bot_token!,
@@ -139,11 +152,17 @@ export class WechatBot extends EventEmitter<WechatBotMessage> {
                 const isSessionExpired = isErr && (updates.errcode === -14 || updates.ret === -14);
 
                 if (isErr && isSessionExpired) {
+                    this.connected = false;
+                    store.delete("botToken");
+                    store.delete("contextToken");
+                    this.abortController.abort();
                     return this.emit("logout");
                 }
 
                 if (isErr) {
                     failures++;
+
+                    this.emit("error", new Error(`获取消息列表失败`));
 
                     if (failures >= 3) {
                         failures = 0;
@@ -160,7 +179,10 @@ export class WechatBot extends EventEmitter<WechatBotMessage> {
                     store.set("updatesBuf", updates.get_updates_buf);
                 }
 
-                this.emit("connected");
+                if (!this.connected) {
+                    this.connected = true;
+                    this.emit("connected");
+                }
 
                 for (const msg of updates.msgs || []) {
                     store.set("contextToken", msg.context_token);
@@ -171,6 +193,8 @@ export class WechatBot extends EventEmitter<WechatBotMessage> {
                 if (this.abortController.signal.aborted) {
                     return;
                 }
+
+                this.emit("error", error instanceof Error ? error : new Error(String(error)));
             }
         }
     }

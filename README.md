@@ -35,6 +35,16 @@ new WechatBot()
     });
 ```
 
+# WechatBot 支持的事件
+
+- login: 登录结果，参数：{ status: 'success' | 'failed' }
+- logout: session过期
+- scan: 扫码登录, 参数：{ url: string }
+- scaned: 扫码成功
+- connected: 连接成功
+- message: 收到消息, 参数：Message
+- error: 错误，参数：Error
+
 # 许可证
 
 MIT License

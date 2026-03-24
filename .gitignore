@@ -17,3 +17,4 @@ lerna-debug.log*
 !.yarn/plugins
 !.yarn/releases
 dist/
+*.test.ts

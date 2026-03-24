@@ -1,6 +1,6 @@
 {
     "name": "wx-clawbot",
-    "version": "0.0.4",
+    "version": "0.0.5",
     "description": "",
     "main": "./dist/index.cjs",
     "types": "./dist/index.d.cts",

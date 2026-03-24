@@ -167,6 +167,7 @@ export class WechatBotApiClient {
     }
 
     async sendMessage(body: WeixinMessage) {
+        if (!body.context_token) throw new Error("context_token缺失");
         await this.fetch({
             url: "ilink/bot/sendmessage",
             body: JSON.stringify({
