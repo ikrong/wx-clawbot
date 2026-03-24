@@ -1,10 +1,11 @@
 {
     "name": "wx-clawbot",
-    "version": "0.0.2",
+    "version": "0.0.3",
     "description": "",
     "main": "./dist/index.cjs",
     "types": "./dist/index.d.cts",
     "type": "module",
+    "homepage": "https://github.com/ikrong/wx-clawbot",
     "exports": {
         ".": {
             "import": "./dist/index.js",
