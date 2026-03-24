@@ -1,0 +1,48 @@
+{
+    "name": "wx-clawbot",
+    "version": "0.0.1",
+    "description": "",
+    "main": "./dist/index.cjs",
+    "types": "./dist/index.d.cts",
+    "type": "module",
+    "exports": {
+        ".": {
+            "import": "./dist/index.js",
+            "require": "./dist/index.cjs",
+            "types": {
+                "import": "./dist/index.d.cts",
+                "require": "./dist/index.d.ts"
+            }
+        }
+    },
+    "scripts": {
+        "build": "tsup ./src/index.ts --format cjs,esm --dts"
+    },
+    "files": [
+        "dist",
+        "package.json",
+        "README.md"
+    ],
+    "keywords": [
+        "wechat",
+        "robot"
+    ],
+    "author": "ikrong",
+    "license": "MIT",
+    "devDependencies": {
+        "@types/node": "^25.5.0",
+        "@types/qrcode-terminal": "^0.12.2",
+        "tsup": "^8.5.1",
+        "tsx": "^4.21.0",
+        "typescript": "^5.9.3"
+    },
+    "dependencies": {
+        "conf": "^15.1.0",
+        "qrcode-terminal": "^0.12.0",
+        "silk-wasm": "^3.7.1"
+    },
+    "prettier": {
+        "tabWidth": 4,
+        "printWidth": 120
+    }
+}
