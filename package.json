@@ -1,6 +1,6 @@
 {
     "name": "wx-clawbot",
-    "version": "0.0.5",
+    "version": "0.0.18",
     "description": "",
     "main": "./dist/index.cjs",
     "types": "./dist/index.d.cts",
@@ -14,7 +14,7 @@
     },
     "scripts": {
         "build": "tsup ./src/index.ts --format cjs,esm --dts",
-        "deploy": "npm version patch --no-git-tag-version && npm run build && npm publish --registry=https://registry.npmjs.com"
+        "deploy": "./scripts/deploy.sh"
     },
     "files": [
         "dist",
@@ -29,12 +29,15 @@
     "license": "MIT",
     "devDependencies": {
         "@types/node": "^25.5.0",
+        "@types/qrcode-terminal": "^0.12.2",
+        "qrcode-terminal": "^0.12.0",
         "tsup": "^8.5.1",
         "tsx": "^4.21.0",
         "typescript": "^5.9.3"
     },
     "dependencies": {
-        "conf": "^15.1.0"
+        "conf": "^15.1.0",
+        "silk-wasm": "^3.7.1"
     },
     "prettier": {
         "tabWidth": 4,

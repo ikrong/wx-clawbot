@@ -37,6 +37,8 @@ export interface GetUploadUrlResp {
     upload_param?: string;
     /** 缩略图上传加密参数，无缩略图时为空 */
     thumb_upload_param?: string;
+    /** 完整上传 URL（服务端直接返回，无需客户端拼接） */
+    upload_full_url?: string;
 }
 
 export const MessageType = {
@@ -69,6 +71,8 @@ export interface CDNMedia {
     aes_key?: string;
     /** 加密类型: 0=只加密fileid, 1=打包缩略图/中图等信息 */
     encrypt_type?: number;
+    /** 完整下载 URL（服务端直接返回，无需客户端拼接） */
+    full_url?: string;
 }
 
 export interface ImageItem {
@@ -202,59 +206,59 @@ export interface GetConfigResp {
 }
 
 export interface UserConfigEntry {
-    config: { typingTicket?: string }
-    everSucceeded: boolean
+    config: { typingTicket?: string };
+    everSucceeded: boolean;
     nextFetchAt: number;
-    retryDelayMs: number
+    retryDelayMs: number;
 }
 
 export type WeixinInboundMediaOpts = {
-  /** Local path to decrypted image file. */
-  decryptedPicPath?: string;
-  /** Local path to transcoded/raw voice file (.wav or .silk). */
-  decryptedVoicePath?: string;
-  /** MIME type for the voice file (e.g. "audio/wav" or "audio/silk"). */
-  voiceMediaType?: string;
-  /** Local path to decrypted file attachment. */
-  decryptedFilePath?: string;
-  /** MIME type for the file attachment (guessed from file_name). */
-  fileMediaType?: string;
-  /** Local path to decrypted video file. */
-  decryptedVideoPath?: string;
+    /** Local path to decrypted image file. */
+    decryptedPicPath?: string;
+    /** Local path to transcoded/raw voice file (.wav or .silk). */
+    decryptedVoicePath?: string;
+    /** MIME type for the voice file (e.g. "audio/wav" or "audio/silk"). */
+    voiceMediaType?: string;
+    /** Local path to decrypted file attachment. */
+    decryptedFilePath?: string;
+    /** MIME type for the file attachment (guessed from file_name). */
+    fileMediaType?: string;
+    /** Local path to decrypted video file. */
+    decryptedVideoPath?: string;
 };
 
 export type UploadedFileInfo = {
-  filekey: string;
-  /** 由 upload_param 上传后 CDN 返回的下载加密参数; fill into ImageItem.media.encrypt_query_param */
-  downloadEncryptedQueryParam: string;
-  /** AES-128-ECB key, hex-encoded; convert to base64 for CDNMedia.aes_key */
-  aeskey: string;
-  /** Plaintext file size in bytes */
-  fileSize: number;
-  /** Ciphertext file size in bytes (AES-128-ECB with PKCS7 padding); use for ImageItem.hd_size / mid_size */
-  fileSizeCiphertext: number;
+    filekey: string;
+    /** 由 upload_param 上传后 CDN 返回的下载加密参数; fill into ImageItem.media.encrypt_query_param */
+    downloadEncryptedQueryParam: string;
+    /** AES-128-ECB key, hex-encoded; convert to base64 for CDNMedia.aes_key */
+    aeskey: string;
+    /** Plaintext file size in bytes */
+    fileSize: number;
+    /** Ciphertext file size in bytes (AES-128-ECB with PKCS7 padding); use for ImageItem.hd_size / mid_size */
+    fileSizeCiphertext: number;
 };
 
 /** Inbound context passed to the OpenClaw core pipeline (matches MsgContext shape). */
 export type WeixinMsgContext = {
-  Body: string;
-  From: string;
-  To: string;
-  AccountId: string;
-  OriginatingChannel: "openclaw-weixin";
-  OriginatingTo: string;
-  MessageSid: string;
-  Timestamp?: number;
-  Provider: "openclaw-weixin";
-  ChatType: "direct";
-  /** Set by monitor after resolveAgentRoute so dispatchReplyFromConfig uses the correct session. */
-  SessionKey?: string;
-  context_token?: string;
-  MediaUrl?: string;
-  MediaPath?: string;
-  MediaType?: string;
-  /** Raw message body for framework command authorization. */
-  CommandBody?: string;
-  /** Whether the sender is authorized to execute slash commands. */
-  CommandAuthorized?: boolean;
+    Body: string;
+    From: string;
+    To: string;
+    AccountId: string;
+    OriginatingChannel: "openclaw-weixin";
+    OriginatingTo: string;
+    MessageSid: string;
+    Timestamp?: number;
+    Provider: "openclaw-weixin";
+    ChatType: "direct";
+    /** Set by monitor after resolveAgentRoute so dispatchReplyFromConfig uses the correct session. */
+    SessionKey?: string;
+    context_token?: string;
+    MediaUrl?: string;
+    MediaPath?: string;
+    MediaType?: string;
+    /** Raw message body for framework command authorization. */
+    CommandBody?: string;
+    /** Whether the sender is authorized to execute slash commands. */
+    CommandAuthorized?: boolean;
 };

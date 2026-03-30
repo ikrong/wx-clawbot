@@ -11,13 +11,16 @@ import {
     type SendTypingReq,
     type WeixinMessage,
 } from "./types.js";
-import { getMimeFromFilename } from "./utils.js";
+import { getMimeFromFilename, pcmBytesToWav } from "./utils.js";
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
+import { decode as silkDecode } from "silk-wasm";
 
 const BASE_URL = "https://ilinkai.weixin.qq.com";
 const CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c";
-const CHANNEL_VERSION = "1.0.2";
+const CHANNEL_VERSION = "2.1.7";
+
+export type DownloadProgress = (data: { total: number; downloaded: number; percent: number }) => void;
 
 export class WechatBotApiClient {
     private accountId?: string;
@@ -71,6 +74,21 @@ export class WechatBotApiClient {
         return this.formatUrl(this.cdnBaseUrl, path, query);
     }
 
+    private versionToBitCode(version: string): number {
+        const parts = version.split(".").map((p) => parseInt(p, 10));
+        const major = parts[0] ?? 0;
+        const minor = parts[1] ?? 0;
+        const patch = parts[2] ?? 0;
+        return ((major & 0xff) << 16) | ((minor & 0xff) << 8) | (patch & 0xff);
+    }
+
+    private getCommonHeaders() {
+        return {
+            "iLink-App-Id": "bot",
+            "iLink-App-ClientVersion": String(this.versionToBitCode(CHANNEL_VERSION || "0.0.0")),
+        };
+    }
+
     async getQrcode(): Promise<{
         qrcode: string;
         qrcode_img_content: string;
@@ -80,7 +98,9 @@ export class WechatBotApiClient {
                 bot_type: 3,
             }),
             {
-                headers: {},
+                headers: {
+                    ...this.getCommonHeaders(),
+                },
             },
         );
         if (resp.ok) return await resp.json();
@@ -89,11 +109,12 @@ export class WechatBotApiClient {
     }
 
     async checkQrcodeStatus(qrcode: string): Promise<{
-        status: "wait" | "scaned" | "confirmed" | "expired";
+        status: "wait" | "scaned" | "confirmed" | "expired" | "scaned_but_redirect";
         bot_token?: string;
         baseurl?: string;
         ilink_bot_id?: string;
         ilink_user_id?: string;
+        redirect_host?: string;
     }> {
         const url = new URL(
             `ilink/bot/get_qrcode_status?${new URLSearchParams({
@@ -105,7 +126,7 @@ export class WechatBotApiClient {
         try {
             const resp = await fetch(url.href, {
                 headers: {
-                    "iLink-App-ClientVersion": "1",
+                    ...this.getCommonHeaders(),
                 },
                 signal: abortSignal,
             });
@@ -132,6 +153,7 @@ export class WechatBotApiClient {
                     "Content-Length": String(Buffer.byteLength(opts.body, "utf-8")),
                     "X-WECHAT-UIN": Buffer.from(String(randomBytes(4).readUInt32BE(0)), "utf-8").toString("base64"),
                     Authorization: `Bearer ${this.botToken!.trim()}`,
+                    ...this.getCommonHeaders(),
                 },
                 body: opts.body,
                 signal: abortSignal,
@@ -224,27 +246,71 @@ export class WechatBotApiClient {
         return JSON.parse(text);
     }
 
-    private async downloadMediaBuffer(encryptedQueryParam: string, aesKeyBase64: string) {
+    private async downloadMediaBuffer(
+        url: string,
+        encryptedQueryParam: string,
+        aesKeyBase64: string,
+        progress: DownloadProgress,
+    ) {
         const res = await fetch(
-            this.getCdnApiUrl("download", {
-                encrypted_query_param: encryptedQueryParam,
-            }),
+            url ||
+                this.getCdnApiUrl("download", {
+                    encrypted_query_param: encryptedQueryParam,
+                }),
         );
-        const buf = Buffer.from(await res.arrayBuffer());
-        const decipher = createDecipheriv("aes-128-ecb", Buffer.from(aesKeyBase64, "base64"), null);
+        const buf = await this.readBufferWithProgress(res, progress);
+        let key = Buffer.from(aesKeyBase64, "base64");
+        if (key.length === 32 && /^[0-9a-fA-F]{32}$/.test(key.toString("ascii"))) {
+            key = Buffer.from(key.toString("ascii"), "hex");
+        }
+        const decipher = createDecipheriv("aes-128-ecb", key, null);
         return Buffer.concat([decipher.update(buf), decipher.final()]);
     }
 
-    private async downloadPlainMediaBuffer(encryptedQueryParam: string) {
-        const res = await fetch(
-            this.getCdnApiUrl("download", {
-                encrypted_query_param: encryptedQueryParam,
-            }),
-        );
-        return Buffer.from(await res.arrayBuffer());
+    private async readBufferWithProgress(res: Response, progress: DownloadProgress) {
+        const reader = res.body?.getReader();
+        if (!reader) return Buffer.alloc(0);
+        const chunks = [];
+        let downloaded = 0;
+        const totalBytes = Number(res.headers.get("content-length")) || 0;
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            downloaded += value.length;
+            if (typeof progress === "function" && totalBytes > 0) {
+                progress({
+                    downloaded,
+                    total: totalBytes,
+                    percent: Math.ceil((downloaded / totalBytes) * 10000) / 100,
+                });
+            }
+        }
+        const buffer = Buffer.concat(chunks);
+        if (typeof progress === "function") {
+            progress({
+                downloaded,
+                total: totalBytes,
+                percent: 100,
+            });
+        }
+        return buffer;
     }
 
-    async downloadMedia(media: MessageItem): Promise<{
+    private async downloadPlainMediaBuffer(url: string, encryptedQueryParam: string, progress: DownloadProgress) {
+        const res = await fetch(
+            url ||
+                this.getCdnApiUrl("download", {
+                    encrypted_query_param: encryptedQueryParam,
+                }),
+        );
+        return this.readBufferWithProgress(res, progress);
+    }
+
+    async downloadMedia(
+        media: MessageItem,
+        progress: DownloadProgress,
+    ): Promise<{
         buffer: Buffer;
         type: "image" | "voice" | "file" | "video";
         contentType?: string;
@@ -256,23 +322,38 @@ export class WechatBotApiClient {
                     ? Buffer.from(media.image_item.aeskey, "hex").toString("base64")
                     : media.image_item.aeskey;
                 const buf = aesKey
-                    ? await this.downloadMediaBuffer(media.image_item.media.encrypt_query_param, aesKey)
-                    : await this.downloadPlainMediaBuffer(media.image_item.media.encrypt_query_param);
+                    ? await this.downloadMediaBuffer(
+                          media.image_item.media.full_url!,
+                          media.image_item.media.encrypt_query_param,
+                          aesKey,
+                          progress,
+                      )
+                    : await this.downloadPlainMediaBuffer(
+                          media.image_item.media.full_url!,
+                          media.image_item.media.encrypt_query_param,
+                          progress,
+                      );
                 return { type: "image", buffer: buf };
             }
         } else if (media.type === MessageItemType.VOICE) {
             if (media.voice_item?.media?.encrypt_query_param && media.voice_item?.media?.aes_key) {
                 const buf = await this.downloadMediaBuffer(
+                    media.voice_item.media.full_url!,
                     media.voice_item.media.encrypt_query_param,
                     media.voice_item.media.aes_key,
+                    progress,
                 );
-                return { type: "voice", buffer: buf, contentType: "audio/silk" };
+                const silkBuf = await silkDecode(buf, 24000);
+                const wavBuf = pcmBytesToWav(silkBuf.data, 24000);
+                return { type: "voice", buffer: wavBuf, contentType: "audio/wav" };
             }
         } else if (media.type === MessageItemType.FILE) {
             if (media.file_item?.media?.encrypt_query_param && media.file_item?.media?.aes_key) {
                 const buf = await this.downloadMediaBuffer(
+                    media.file_item.media.full_url!,
                     media.file_item.media.encrypt_query_param,
                     media.file_item.media.aes_key,
+                    progress,
                 );
                 return {
                     type: "file",
@@ -284,8 +365,10 @@ export class WechatBotApiClient {
         } else if (media.type === MessageItemType.VIDEO) {
             if (media.video_item?.media?.encrypt_query_param && media.video_item.media.aes_key) {
                 const buf = await this.downloadMediaBuffer(
+                    media.video_item.media.full_url!,
                     media.video_item.media.encrypt_query_param,
                     media.video_item.media.aes_key,
+                    progress,
                 );
                 return { type: "video", buffer: buf, contentType: "video/mp4" };
             }
@@ -310,29 +393,28 @@ export class WechatBotApiClient {
             aeskey: aesKey.toString("hex"),
         });
 
-        if (!uploadRes.upload_param) {
-            throw new Error("Failed to get upload param");
-        }
-
         const cipher = createCipheriv("aes-128-ecb", aesKey, null);
+        const body = new Uint8Array(Buffer.concat([cipher.update(buf), cipher.final()]));
+        const uploadUrl =
+            uploadRes.upload_full_url?.trim() ||
+            (uploadRes.upload_param
+                ? this.getCdnApiUrl("upload", {
+                      encrypted_query_param: uploadRes.upload_param,
+                      filekey: filekey,
+                  })
+                : await Promise.reject("invalid upload_param"));
 
         let tryCount = 1;
 
         while (true) {
             try {
-                const res = await fetch(
-                    this.getCdnApiUrl("upload", {
-                        encrypted_query_param: uploadRes.upload_param,
-                        filekey: filekey,
-                    }),
-                    {
-                        method: "POST",
-                        body: new Uint8Array(Buffer.concat([cipher.update(buf), cipher.final()])),
-                        headers: {
-                            "Content-Type": "application/octet-stream",
-                        },
+                const res = await fetch(uploadUrl!, {
+                    method: "POST",
+                    body: body,
+                    headers: {
+                        "Content-Type": "application/octet-stream",
                     },
-                );
+                });
                 const param = res.headers.get("x-encrypted-param");
                 if (res.status === 200 && param) {
                     return {

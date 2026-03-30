@@ -18,3 +18,5 @@ lerna-debug.log*
 !.yarn/releases
 dist/
 *.test.ts
+config.json
+tmp/

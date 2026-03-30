@@ -1,20 +1,44 @@
-import type { WechatBotApiClient } from "./client.js";
+import { randomUUID } from "node:crypto";
+import type { DownloadProgress, WechatBotApiClient } from "./client.js";
 import { store } from "./store.js";
 import { MessageItemType, type WeixinMessage } from "./types.js";
 
 let typingTimer: any = null;
 
 export class Message {
+    private _id?: string;
+
+    get id() {
+        if (this.item?.message_id) {
+            return this.item?.message_id;
+        }
+        if (!this._id) {
+            this._id = randomUUID();
+        }
+        return this._id;
+    }
+
     get text() {
         return this.getTextBody()?.trim();
+    }
+
+    get voiceText() {
+        return String(
+            this.item?.item_list?.find((i) => i.type === MessageItemType.VOICE)?.voice_item?.text || "",
+        ).trim();
     }
 
     get hasMedia() {
         return !!this.getMedia();
     }
 
+    private _contextToken?: string;
     get contextToken() {
-        return this.item?.context_token || store.get("contextToken");
+        return this.item?.context_token || this._contextToken;
+    }
+
+    get timestamp() {
+        return this.item?.create_time_ms;
     }
 
     constructor(
@@ -39,9 +63,6 @@ export class Message {
                 if (!parts.length) return text;
                 return `[引用: ${parts.join(" | ")}]\n${text}`;
             }
-            if (item.type === MessageItemType.VOICE && item.voice_item?.text) {
-                return item.voice_item.text;
-            }
         }
         return "";
     }
@@ -58,7 +79,7 @@ export class Message {
                 (i.type === MessageItemType.IMAGE && i.image_item?.media?.encrypt_query_param) ||
                 (i.type === MessageItemType.VIDEO && i.video_item?.media?.encrypt_query_param) ||
                 (i.type === MessageItemType.FILE && i.file_item?.media?.encrypt_query_param) ||
-                (i.type === MessageItemType.VOICE && i.voice_item?.media?.encrypt_query_param && !i.voice_item.text)
+                (i.type === MessageItemType.VOICE && i.voice_item?.media?.encrypt_query_param)
             );
         });
 
@@ -74,47 +95,55 @@ export class Message {
         return mainItem || refItem;
     }
 
-    downloadMedia() {
+    downloadMedia(progress?: DownloadProgress) {
         const media = this.getMedia();
         if (!media) return;
-        return this.client.downloadMedia(media);
+        return this.client.downloadMedia(media, progress || (() => void 0));
+    }
+
+    async ensureContextToken() {
+        const token = this.contextToken;
+        if (!token) {
+            this._contextToken = await store.get("contextToken");
+        }
+        return this.contextToken;
     }
 
     async sendText(text: string) {
-        await this.client.sendText(text, this.contextToken!);
+        await this.client.sendText(text, (await this.ensureContextToken())!);
     }
 
     async sendImage(filePath: string) {
-        await this.client.sendImage(filePath, this.contextToken!);
+        await this.client.sendImage(filePath, (await this.ensureContextToken())!);
     }
 
     async sendVideo(filePath: string) {
-        await this.client.sendVideo(filePath, this.contextToken!);
+        await this.client.sendVideo(filePath, (await this.ensureContextToken())!);
     }
 
     async sendFile(filePath: string) {
-        await this.client.sendFile(filePath, this.contextToken!);
+        await this.client.sendFile(filePath, (await this.ensureContextToken())!);
     }
 
     private async getTypingTicket() {
-        const entry = store.get("userEntry");
+        const entry = await store.get("userEntry");
         const shouldFetch = !entry || Date.now() >= entry.nextFetchAt;
 
         if (shouldFetch) {
             let ok = false;
             try {
                 const resp = await this.client.getConfig({
-                    contextToken: this.contextToken,
+                    contextToken: (await this.ensureContextToken())!,
                 });
 
                 if (resp.ret === 0) {
-                    store.set("userEntry", {
+                    await store.set("userEntry", {
                         config: {
-                            typingTicket: resp.typing_ticket,
+                            typingTicket: resp.typing_ticket!,
                         },
                         everSucceeded: true,
                         nextFetchAt: Date.now() + Math.random() * 24 * 60 * 60 * 1000,
-                        retryDelayMsg: 2_000,
+                        retryDelayMs: 2_000,
                     });
                     ok = true;
                 }
@@ -126,9 +155,9 @@ export class Message {
                 if (entry) {
                     entry.nextFetchAt = Date.now() + nextDelay;
                     entry.retryDelayMs = nextDelay;
-                    store.set("userEntry", entry);
+                    await store.set("userEntry", entry);
                 } else {
-                    store.set("userEntry", {
+                    await store.set("userEntry", {
                         config: { typingTicket: "" },
                         everSucceeded: false,
                         nextFetchAt: Date.now() + 2_000,
@@ -138,7 +167,7 @@ export class Message {
             }
         }
 
-        return store.get("userEntry")?.config.typingTicket || "";
+        return (await store.get("userEntry"))?.config.typingTicket || "";
     }
 
     async sendTyping() {
@@ -168,5 +197,17 @@ export class Message {
                 status: 2,
             });
         }
+    }
+
+    fromJSON(item?: WeixinMessage) {
+        if (item) {
+            this.item = item;
+        }
+    }
+
+    toJSON() {
+        const item = { ...this.item };
+        delete item.context_token;
+        return item;
     }
 }
